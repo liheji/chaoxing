@@ -4,6 +4,8 @@
 """
 
 import configparser
+import base64
+from urllib.parse import urlparse, parse_qs
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Any
@@ -271,6 +273,72 @@ class Bark(NotificationService):
             logger.error(f"Bark通知发送失败: {e}")
         except ValueError as e:
             logger.error(f"Bark返回数据解析失败: {e}")
+
+
+class Ntfy(NotificationService):
+    """
+    Ntfy通知服务
+    """
+
+    def _init_service(self) -> None:
+        """初始化Ntfy服务"""
+        if not self._conf or not self._conf.get('url'):
+            self.disabled = True
+            logger.info("未找到Ntfy配置，已忽略该通知服务")
+            return
+
+        res = urlparse(self._conf.get('url'))
+        params = parse_qs(res.query)
+        _t = params.get("t", [None])[0]
+        _u = params.get("u", [None])[0]
+        _p = params.get("p", [None])[0]
+
+        auth = None
+        if _t:
+            auth = "Bearer " + _t
+        elif _u and _p:
+            auth = "Basic " + base64.b64encode((_u + ":" + _p).encode('utf-8')).decode('utf-8')
+
+        self.auth = auth
+        self.topic = res.path.strip("/")
+        self.url = f"{res.scheme}://{res.netloc}"
+
+        if not self.url or not self.topic:
+            self.disabled = True
+            logger.info("Ntfy配置不正确，已忽略该通知服务")
+            return
+
+        logger.info(f"已初始化Ntfy通知服务，URL: {self.url}/{self.topic}")
+
+    def _send(self, message: str) -> None:
+        """
+        通过Ntfy发送通知
+
+        Args:
+            message: 要发送的消息内容
+        """
+
+        headers = {'Content-Type': 'application/json;charset=utf-8'}
+        params = {
+            "topic": self.topic,
+            "title": "学习通-学习进度通知",
+            "message": message,
+            "tags": ["school"],
+            "priority": 3,
+            "icon": "https://ts1.tc.mm.bing.net/th/id/ODF.W_mXxwT0jEMHY1YpNuUCxg",
+        }
+        if self.auth:
+            headers["Authorization"] = self.auth
+
+        try:
+            response = requests.post(self.url, json=params, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"Ntfy通知发送成功: {result}")
+        except requests.RequestException as e:
+            logger.error(f"Ntfy通知发送失败: {e}")
+        except ValueError as e:
+            logger.error(f"Ntfy返回数据解析失败: {e}")
 
 
 # 为了向后兼容，保留原来的Notification类
