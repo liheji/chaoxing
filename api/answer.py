@@ -220,6 +220,17 @@ class TikuYanxi(Tiku):
         self._token_index = 0   # token队列计数器
         self._times = 100   # 查询次数剩余, 初始化为100, 查询后校对修正
 
+    def update_times(self):
+        res = requests.get(
+            'https://tk.enncy.cn/info',
+            params={'token': self._token},
+            verify=False
+        )
+        if res.status_code == 200 and res.json()['code']:
+            json_data = res.json()['data']
+            self._times = json_data['times']
+            logger.info(f'当前TOKEN信息: 剩余{self._times}次，成功调用{json_data["success_times"]}次')
+
     def _query(self,q_info:dict):
         res = requests.get(
             self.api,
@@ -235,15 +246,17 @@ class TikuYanxi(Tiku):
             res_json = res.json()
             if not res_json['code']:
                 # 如果是因为TOKEN次数到期, 则更换token
-                if self._times == 0 or '次数不足' in res_json['data']['answer']:
+                if '不足' in res_json['data']['answer'] and '充值' in res_json['data']['answer']:
                     logger.info(f'TOKEN查询次数不足, 将会更换并重新搜题')
                     self._token_index += 1
                     self.load_token()
+                    self.update_times()
                     # 重新查询
                     return self._query(q_info)
-                logger.error(f'{self.name}查询失败:\n\t剩余查询数{res_json["data"].get("times",f"{self._times}(仅参考)")}:\n\t消息:{res_json["message"]}')
+                logger.error(f'{self.name}查询失败:\n\t剩余查询次数{res_json["data"].get("times",f"{self._times}(仅参考)")}:\n\t消息:{res_json["message"]}')
                 return None
-            self._times = res_json["data"].get("times",self._times)
+            self._times -= 1
+            logger.info(f'{self.name}查询成功:\t剩余查询次数{self._times}(仅参考)')
             return res_json['data']['answer'].strip()
         else:
             logger.error(f'{self.name}查询失败:\n{res.text}')
@@ -259,6 +272,7 @@ class TikuYanxi(Tiku):
 
     def _init_tiku(self):
         self.load_token()
+        self.update_times()
 
 class TikuLike(Tiku):
     # Like知识库实现
