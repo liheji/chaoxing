@@ -76,7 +76,7 @@ def cut(answer):
     res = []
     for char in cut_char:
         res = [
-            opt for opt in answer.split(char) if opt.strip()
+            opt.strip() for opt in answer.split(char) if opt.strip()
         ]  # Filter empty strings
         if len(res) > 0:
             return res
