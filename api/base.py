@@ -398,8 +398,7 @@ class Chaoxing:
                     if forbidden_retry < max_forbidden_retry:
                         forbidden_retry += 1
                         logger.warning(
-                            "出现403报错, 正在尝试刷新会话状态 (第%s次)",
-                            forbidden_retry,
+                            "出现403报错, 正在尝试刷新会话状态 (第%d次)" % forbidden_retry
                         )
                         time.sleep(random.uniform(2, 4))
                         refreshed_meta = self._recover_after_forbidden(_session, _job)
