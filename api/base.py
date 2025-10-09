@@ -569,7 +569,7 @@ class Chaoxing:
             else:
                 return res
 
-        def cut_res(answer: str):
+        def cut_res(answer: str, length: int):
             cut_char = [
                 "\n",
                 "\r",
@@ -584,10 +584,16 @@ class Chaoxing:
                 if len(res) > 1:
                     return res
 
+            # 最终尝试，使用空白符分割
+            res = [
+                opt.strip() for opt in re.split(r'\s+', answer) if opt.strip()
+            ]
+            if 1 <= len(res) <= length:
+                return res
+
             logger.warning(
-                f"未能从网页中提取题目信息, 以下为相关信息：\n\t{answer}\n\n{_ORIGIN_HTML_CONTENT}\n"
-            )  # 尝试输出网页内容和选项信息
-            logger.warning("未能正确提取题目选项信息! 请反馈并提供以上信息")
+                f"未能切割多选答案信息, 以下为答案内容：\n\t{answer}"
+            )
             return None
 
         def clean_res(res):
@@ -688,7 +694,7 @@ class Chaoxing:
                 if q["type"] == "multiple":
                     # 多选处理
                     options_list = multi_cut(q["options"])
-                    res_list = cut_res(res)
+                    res_list = cut_res(res, len(options_list))
                     if res_list is not None and options_list is not None:
                         for _a in clean_res(res_list):
                             for o in options_list:
