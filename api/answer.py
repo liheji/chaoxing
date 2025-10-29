@@ -262,13 +262,32 @@ class TikuYanxi(Tiku):
             logger.error(f'{self.name}查询失败:\n{res.text}')
         return None
     
-    def load_token(self): 
+    def load_token(self):
         token_list = self._conf['tokens'].split(',')
-        if self._token_index == len(token_list):
+        if self._token_index >= len(token_list):
+            # 尝试获取TOKEN
+            if self.get_next_token():
+                return
             # TOKEN 用完
             logger.error('TOKEN用完, 请自行更换再重启脚本')
             raise PermissionError(f'{self.name} TOKEN 已用完, 请更换')
         self._token = token_list[self._token_index]
+
+    def get_next_token(self):
+        token_url = self._conf['token_url']
+        if not token_url:
+            return False
+        for tryCnt in range(3):
+            try:
+                res = requests.get(token_url, timeout=300, verify=False)
+                if res.json()['code'] == 0:
+                    self._token = res.json()['data']
+                    return True
+                time.sleep(30)
+                logger.error('请求获取TOKEN失败，30s后进行第 %d 重试' % (tryCnt+1))
+            except Exception as e:
+                continue
+        return False
 
     def _init_tiku(self):
         self.load_token()
