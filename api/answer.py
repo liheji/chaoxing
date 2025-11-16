@@ -322,15 +322,17 @@ class TikuYanxi(Tiku):
             res_json = res.json()
             if not res_json['code']:
                 # 如果是因为TOKEN次数到期, 则更换token
-                if self._times == 0 or '次数不足' in res_json['data']['answer']:
+                if '不足' in res_json['data']['answer'] and '充值' in res_json['data']['answer']:
                     logger.info(f'TOKEN查询次数不足, 将会更换并重新搜题')
                     self._token_index += 1
                     self.load_token()
+                    self.update_times()
                     # 重新查询
                     return self._query(q_info)
-                logger.error(f'{self.name}查询失败:\n\t剩余查询数{res_json["data"].get("times",f"{self._times}(仅参考)")}:\n\t消息:{res_json["message"]}')
+                logger.error(f'{self.name}查询失败:\n\t剩余查询次数{res_json["data"].get("times",f"{self._times}(仅参考)")}:\n\t消息:{res_json["message"]}')
                 return None
-            self._times = res_json["data"].get("times",self._times)
+            self._times -= 1
+            logger.info(f'{self.name}查询成功:\t剩余查询次数{self._times}(仅参考)')
             return res_json['data']['answer'].strip()
         else:
             logger.error(f'{self.name}查询失败:\n{res.text}')
@@ -338,14 +340,45 @@ class TikuYanxi(Tiku):
 
     def load_token(self):
         token_list = self._conf['tokens'].split(',')
-        if self._token_index == len(token_list):
+        if self._token_index >= len(token_list):
+            # 尝试获取在线TOKEN
+            if self.get_next_token():
+                return
             # TOKEN 用完
             logger.error('TOKEN用完, 请自行更换再重启脚本')
             raise PermissionError(f'{self.name} TOKEN 已用完, 请更换')
         self._token = token_list[self._token_index]
 
+    def get_next_token(self):
+        token_url = self._conf['token_url']
+        if not token_url:
+            return False
+        for tryCnt in range(3):
+            try:
+                res = requests.get(token_url, timeout=300, verify=False)
+                if res.json()['code'] == 0:
+                    self._token = res.json()['data']
+                    return True
+                time.sleep(30)
+                logger.error('请求获取TOKEN失败，30s后进行第 %d 重试' % (tryCnt+1))
+            except Exception as e:
+                continue
+        return False
+
+    def update_times(self):
+        res = requests.get(
+            'https://tk.enncy.cn/info',
+            params={'token': self._token},
+            verify=False
+        )
+        if res.status_code == 200 and res.json()['code']:
+            json_data = res.json()['data']
+            self._times = json_data['times']
+            logger.info(f'当前TOKEN信息: 剩余{self._times}次，成功调用{json_data["success_times"]}次')
+
     def _init_tiku(self):
         self.load_token()
+        self.update_times()
 
 class TikuLike(Tiku):
     # LIKE知识库实现 参考 https://www.datam.site/
