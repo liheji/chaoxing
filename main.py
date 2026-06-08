@@ -84,6 +84,8 @@ def parse_args():
         help="遇到关闭任务点时的行为: retry-重试, ask-询问, continue-继续"
     )
 
+    parser.add_argument("--auto-sign", action="store_true", help="自动签到")
+
     # 在解析之前捕获 -h 的行为
     if len(sys.argv) == 2 and sys.argv[1] in {"-h", "--help"}:
         parser.print_help()
@@ -154,11 +156,12 @@ def build_config_from_args(args):
 def init_config():
     """初始化配置"""
     args = parse_args()
-    
+
     if args.config:
         return load_config_from_file(args.config)
     else:
         return build_config_from_args(args)
+
 
 
 def init_chaoxing(common_config, tiku_config):
@@ -181,13 +184,29 @@ def init_chaoxing(common_config, tiku_config):
     tiku.init_tiku()  # 初始化题库
     
     # 获取查询延迟设置
+    
+    # 检查大模型连接（如果使用的是大模型题库）
+    # 根据配置文件中的 provider 判断是否为大模型题库
+    provider = tiku_config.get('provider', '')
+    provider_list = [name.strip() for name in provider.split(',') if name.strip()]
+    if any(name in ['AI', 'SiliconFlow'] for name in provider_list):
+        check_connection = tiku_config.get('check_llm_connection', 'true').lower() == 'true'
+        if check_connection:
+            logger.info(f'正在验证大模型配置 (provider={provider})...')
+            if not tiku.check_llm_connection():
+                logger.error('大模型连接检查失败')
+                choice = input('大模型连接检查失败，无法准确答题，是否继续运行？(Y/n): ').strip().lower()
+                # 直接回车默认继续运行
+                if choice not in ('', 'y', 'yes'):
+                    raise RuntimeError('用户取消运行')
+                logger.info('用户选择继续运行...')
+
     query_delay = tiku_config.get("delay", 0)
     
     # 实例化超星API
     chaoxing = Chaoxing(account=account, tiku=tiku, query_delay=query_delay)
     
     return chaoxing
-
 
 def process_job(chaoxing: Chaoxing, course: dict, job: dict, job_info: dict, speed: float) -> StudyResult:
     """处理单个任务点"""
@@ -263,6 +282,9 @@ class ChapterTask:
 
 class JobProcessor:
     def __init__(self, chaoxing: Chaoxing, course: dict[str, Any], tasks: list[ChapterTask], config: dict[str, Any]):
+        if "jobs" not in config or not config["jobs"]:
+            config["jobs"] = 4
+        
         self.chaoxing = chaoxing
         self.course = course
         self.speed = config["speed"]
@@ -350,8 +372,10 @@ class JobProcessor:
             while True:
                 task = self.retry_queue.get()
                 self.task_queue.put(task)
-                self.task_queue.task_done() # task_done is not called when a task failed and needs to be retried, so if is reput into the queue, the task num will increase by one and become more than the real task number
-                time.sleep(1)
+                # task_done is not called when a task failed and needs to be retried so if is reinserted into the queue,
+                # the task num will increase by one and become more than the real task number
+                self.task_queue.task_done()
+                time.sleep(1) # TODO: Replace with a configurable wait time
         except ShutDown:
             pass
 
@@ -418,33 +442,15 @@ def process_course(chaoxing: Chaoxing, course:dict[str, Any], config: dict):
 
     tqdm.format_sizeof = _old_format_sizeof
 
-    """
-    while __point_index < len(point_list["points"]):
-        point = point_list["points"][__point_index]
-        logger.debug(f"当前章节 __point_index: {__point_index}")
-        
-        result, auto_skip_notopen = process_chapter(
-            chaoxing, course, point, RB, notopen_action, speed, auto_skip_notopen
-        )
-        
-        if result == -1:  # 退出当前课程
-            break
-        elif result == 0:  # 重试前一章节
-            __point_index -= 1  # 默认第一个任务总是开放的
-        else:  # 继续下一章节
-            __point_index += 1
-    """
-
-
-
 def filter_courses(all_course, course_list):
     """过滤要学习的课程"""
     if not course_list:
         # 手动输入要学习的课程ID列表
         print("*" * 10 + "课程列表" + "*" * 10)
         for course in all_course:
-            print(f"ID: {course['courseId']} 课程名: {course['title']}")
+            print(f"ID: {course['courseId']} 班级ID: {course['clazzId']} 课程名: {course['title']}")
         print("*" * 28)
+        print("提示: 同一 courseId 下若存在多个班级, 将分别完成。")
         try:
             course_list = input(
                 "请输入想要学习的课程列表,以逗号分隔,例: 2151141,189191,198198\n"
@@ -454,11 +460,12 @@ def filter_courses(all_course, course_list):
 
     # 筛选需要学习的课程
     course_task = []
-    course_ids = []
+    seen_keys = set()
     for course in all_course:
-        if course["courseId"] in course_list and course["courseId"] not in course_ids:
+        key = (course["courseId"], course["clazzId"])
+        if course["courseId"] in course_list and key not in seen_keys:
             course_task.append(course)
-            course_ids.append(course["courseId"])
+            seen_keys.add(key)
     
     # 如果没有指定课程，则学习所有课程
     if not course_task:
